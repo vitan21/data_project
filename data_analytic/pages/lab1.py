@@ -512,11 +512,11 @@ st.markdown("## Предлагаемый алгоритм очистки дан�
 cleaning_rules = [
     # неверное название к
 
-    # проущенный значение id
+    # проПущенный значение id
     {
         "id": "RULE-01", # уникальный id правила
         "problem_type": "Пропущенное значение", # проблема
-        "columns": ["record_id", "userID"], # признак | группа признаков
+        "columns": ["userID"], # признак | группа признаков
         "condition_type": "IS_NULL", # критерий выявления
         "condition_params": None, # параметры для условия
         "action": "DROP_ROW", # способ обработки
@@ -572,22 +572,10 @@ cleaning_rules = [
         "decription": "Сохранение первой записи"
     },
 
-    # # дубликат действий
-    # {
-    #     "id": "RULE-04",
-    #     "problem_type": "Дубликат",
-    #     "columns": ["userID", "Track", "time", "Day"],
-    #     "condition_type": "DUPLICATE",
-    #     "condition_params": None,
-    #     "action": "DROP_DUPLICATE",
-    #     "action_params": {
-    #         "keep": "last"
-    #     },
-    #     "decription": "Сохранение последней записи"
-    # },
 
 
-    # некорректный значение времени
+
+    # некорректное значение времени
     {
         "id": "RULE-05",
         "problem_type": "Некорректное значение",
@@ -648,5 +636,19 @@ cleaning_rules = [
         "decription": "Исключение записей пользователя"
     },
 
+
+    # # дубликат действий
+    # {
+    #     "id": "RULE-04",
+    #     "problem_type": "Дубликат",
+    #     "columns": ["userID", "Track", "time", "Day"],
+    #     "condition_type": "DUPLICATE",
+    #     "condition_params": None,
+    #     "action": "DROP_DUPLICATE",
+    #     "action_params": {
+    #         "keep": "last"
+    #     },
+    #     "decription": "Сохранение последней записи"
+    # },
 ]
 

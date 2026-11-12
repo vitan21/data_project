@@ -11,8 +11,12 @@ sys.path.insert(0, str(ROOT_DIR))
 import os
 import pandas as pd
 from sqlalchemy import create_engine, types, URL, inspect, text
-from db_administration.loaders import load_data, load_to_staging
-
+from db_administration.loaders import (
+    load_data, 
+    load_to_staging, 
+    load_to_ods,
+    load_to_dds
+)
 from db_administration.connection import get_db_engine
 
 DB_USER = "postgres"
@@ -22,7 +26,7 @@ DB_PORT = "5432"
 DB_NAME = "music_db"
 
 
-def load_data_to_sql(engine,file_path,table_name, schema_name):
+def load_data_to_sql(engine, file_path, table_name, schema_name):
     inspector = inspect(engine)
 
     if inspector.has_table(table_name, schema = schema_name):
@@ -31,7 +35,7 @@ def load_data_to_sql(engine,file_path,table_name, schema_name):
             count = connection.execute(query).first()
             if count is not None:
                 print(
-                f"[Пропуск] Таблица {schema_name}.{table_name} "
+                f"[SOURCE] Таблица {schema_name}.{table_name} "
                 f"уже содержит {count} записей."
             )
                 return
@@ -73,8 +77,37 @@ def main():
     )
     # создание staging слоя 
     load_to_staging()
-    
-    
+
+    # создание слоя ods
+    load_to_ods("2025-01-06", "2025-01-12")
+
+    # создания слоя dds
+    load_to_dds()
 if __name__ == "__main__":
     main()
 
+
+"""
+1. Факты и измерения
+Факты - прослушивание трека пользователем (событие прослушивания)
+Измерения: кто слушал, что слушал, когда слушал, где слушал, кто исполнитель,
+какой жанр,
+
+2. Уровень детализации фактов
+Одна строка - одно прослушивания
+
+3. выделить основные сущности предметной области
+таблица фактов - прослушивания треков,
+пользователи, назв треков, артисты, жанры, города, время
+
+4. нормализовать измерения;
+
+5. определить первичные и внешние ключи;
+
+6. определить типы данных;
+
+7. создать физическую структуру хранилища;
+
+8. реализовать загрузку данных из ODS в разработанное хранилище.
+
+"""
