@@ -48,6 +48,10 @@ def load_data_to_sql(engine, file_path, table_name, schema_name):
             f"[Загрузка] Таблица {schema_name}.{table_name} "
             "не найдена. Создаём её."
         )
+        with engine.begin() as connection:
+            connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema_name}"))
+
+            
 
         
     df = load_data(file_path)
@@ -82,7 +86,7 @@ def main():
     load_to_ods("2025-01-06", "2025-01-12")
 
     # создания слоя dds
-    load_to_dds()
+    load_to_dds("2025-01-06", "2025-01-12")
 if __name__ == "__main__":
     main()
 

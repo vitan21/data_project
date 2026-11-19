@@ -1,13 +1,18 @@
 import sys
 from pathlib import Path
 
-ROOT_DIR = Path(__file__).resolve().parents[2]
+ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT_DIR))
 
 from faker import Faker
 import random
 from datetime import date, datetime, timedelta
 import pandas as pd
+from sqlalchemy import text
+
+from db_administration.loaders import load_data, get_db_engine
+df_s = load_data("music_project.csv")
+
 
 
 fake = Faker("en_US")
@@ -17,7 +22,18 @@ artists = [fake.name() for _ in range(25)]
 tracks = [fake.sentence(nb_words=3).rstrip(".").title() for _ in range(40)]
 genres = ["Pop", "Rock", "Hip-Hop", "Jazz", "Electronic", "R&B", "Classical"]
 users = [f"btuser{i:03d}" for i in range(1,101)]
- 
+
+
+# получаем текущий id из бд
+def get_next_record_id(engine, schema_name="source", table_name="music_tracks"):
+    with engine.begin() as connection:
+        max_id = connection.execute(
+            text(f"""
+                SELECT COALESCE(MAX(CAST("Unnamed: 0" AS BIGINT)), 0)
+                FROM {schema_name}.{table_name}
+            """)
+        ).scalar()
+        return max_id + 1
 
 # генерация партии синтетических данных
 def generate_batch (
@@ -25,7 +41,7 @@ def generate_batch (
     start_date: str, # начальная дата
     end_date: str, # конечная дата
     batch_number: int, # номер партии
-    start_record_id: int=1000000, # id записи
+    start_record_id: int=len(df_s), # id записи
     error_rate: float = 0.03, # доля ошибок
     seed: int = 42 # нач знач генератора
 ):
@@ -51,6 +67,9 @@ def generate_batch (
 
     records = []
 
+    # Храним город для каждого пользователя на каждую дату
+    user_day_cities = {}
+
     # создание записи
     for i in range(n_records):
         record_id = start_record_id + i
@@ -63,14 +82,21 @@ def generate_batch (
 
         genre = random.choice(genres)
 
-        city = random.choice(cities)
+        dt_value = random.choice(date_range)
+
+        # Для каждого пользователя на конкретную дату
+        # закрепляем один город
+        user_day_key = (user_id, dt_value)
+
+        if user_day_key not in user_day_cities:
+            user_day_cities[user_day_key] = random.choice(cities)
+        city = user_day_cities[user_day_key]
 
         time_value = (
             f"{random.randint(0, 23):02d}:"
             f"{random.randint(0, 59):02d}:"
             f"{random.randint(0, 59):02d}"
         )
-        dt_value = random.choice(date_range)
 
         day_name = dt_value.strftime("%A")
 
@@ -83,7 +109,7 @@ def generate_batch (
                 "missing_genre",
                 "missing_city",
                 "invalid_time",
-                "invalid_day"
+                "invalid_day",
                 "teleport"
             ])
             if error_type == "missing_user":
@@ -135,3 +161,26 @@ def generate_batch (
     print(f"[GEN] Файл: {file_path}\n")
 
     return df_gen
+
+def main():
+    engine = get_db_engine()
+    current_record_id = get_next_record_id(engine)
+    # создание двух партий данных
+    batch_1 = generate_batch(
+        n_records=5000,
+        start_date="2025-01-13",
+        end_date="2025-01-25",
+        batch_number=1,
+        start_record_id=current_record_id,
+        error_rate=0.1
+    )
+    batch_2 = generate_batch(
+        n_records=28000,
+        start_date="2025-02-01",
+        end_date="2025-02-27",
+        batch_number=2,
+        start_record_id=current_record_id + len(batch_1)
+)
+
+if __name__ == "__main__":
+    main()

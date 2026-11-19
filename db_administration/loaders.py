@@ -30,14 +30,6 @@ def load_to_staging():
 
     with engine.begin() as connection:
 
-        # columns = connection.execute(
-        #     text("""
-        #         SELECT COLUMN_NAME
-        #         FROM information_schema.columns
-        #         WHERE table_schema = 'source' AND TABLE_NAME = 'music_tracks'
-        #     """).fetchall()
-        # )
-
         connection.execute(
             text("CREATE SCHEMA IF NOT EXISTS staging")
         )
@@ -222,14 +214,12 @@ def load_to_ods(p_sdt: str, p_edt: str):
         print(f"[ODS] Успешно загружено и очищено {inserted_rows} строк.")
 
        
-def load_to_dds():
+def load_to_dds(p_sdt: str, p_edt: str):
     engine = get_db_engine()
-    print(f"\n[DDS] Начало загрузки")
+    print(f"\n[DDS] Начало загрузки за период {p_sdt} — {p_edt}")
 
     with engine.begin() as connection:
-        connection.execute(text(
-            "DROP SCHEMA IF EXISTS dds CASCADE"
-        ))
+
         connection.execute(
             text("CREATE SCHEMA IF NOT EXISTS dds")
         )
@@ -271,13 +261,13 @@ def load_to_dds():
                     day_name TEXT NOT NULL,
                     UNIQUE (date_value, time_value, day_name)
                 );
-                CREATE TABLE dds.facts (
+                CREATE TABLE IF NOT EXISTS dds.facts (
                     fact_id BIGSERIAL PRIMARY KEY,
                     user_id TEXT REFERENCES dds.users(user_id),
                     track_id INTEGER REFERENCES dds.tracks(track_id),
                     city_id INTEGER REFERENCES dds.cities(city_id),
                     datetime_id INTEGER REFERENCES dds.datetime(datetime_id),
-                    record_id BIGINT
+                    record_id BIGINT UNIQUE
                 );
 
             """)
@@ -288,28 +278,31 @@ def load_to_dds():
         # пользователи
         result = connection.execute(text("""
             INSERT INTO dds.users (user_id)
-            SELECT DISTINCT
-                user_id
+            SELECT DISTINCT user_id
             FROM ods.music_tracks
-        """))
+            WHERE dt BETWEEN :sdt AND :edt
+            ON CONFLICT (user_id) DO NOTHING
+        """), {"sdt": p_sdt, "edt": p_edt})
         print(f"[DDS] users: добавлено {result.rowcount} записей")
 
         # артисты
         result = connection.execute(text("""
             INSERT INTO dds.artists (artist_name)
-            SELECT DISTINCT
-                artist
+            SELECT DISTINCT artist
             FROM ods.music_tracks
-        """))
+            WHERE dt BETWEEN :sdt AND :edt
+            ON CONFLICT (artist_name) DO NOTHING
+        """), {"sdt": p_sdt, "edt": p_edt})
         print(f"[DDS] artists: добавлено {result.rowcount} записей")
 
         # жанры
         result = connection.execute(text("""
             INSERT INTO dds.genres (genre_name)
-            SELECT DISTINCT
-                genre
+            SELECT DISTINCT genre
             FROM ods.music_tracks
-        """))
+            WHERE dt BETWEEN :sdt AND :edt
+            ON CONFLICT (genre_name) DO NOTHING
+        """), {"sdt": p_sdt, "edt": p_edt})
         print(f"[DDS] genres: добавлено {result.rowcount} записей")
 
         # треки
@@ -327,7 +320,9 @@ def load_to_dds():
                 ON b.artist_name = a.artist
             INNER JOIN dds.genres c
                 ON c.genre_name = a.genre
-        """))
+            WHERE dt BETWEEN :sdt AND :edt
+            ON CONFLICT DO NOTHING
+        """), {"sdt": p_sdt, "edt": p_edt})
         print(f"[DDS] tracks: добавлено {result.rowcount} записей")
 
         # города
@@ -336,7 +331,9 @@ def load_to_dds():
             SELECT DISTINCT
                 city
             FROM ods.music_tracks
-        """))
+            WHERE dt BETWEEN :sdt AND :edt
+            ON CONFLICT (city_name) DO NOTHING
+        """), {"sdt": p_sdt, "edt": p_edt})
         print(f"[DDS] cities: добавлено {result.rowcount} записей")
 
         # время
@@ -351,8 +348,22 @@ def load_to_dds():
                 time::time,
                 day
             FROM ods.music_tracks
-        """))
+            WHERE dt BETWEEN :sdt AND :edt
+            ON CONFLICT DO NOTHING
+        """),{"sdt": p_sdt, "edt": p_edt})
         print(f"[DDS] datetime: добавлено {result.rowcount} записей")
+
+        # удаление старых фактов за период перед перезаливкой
+        delete_facts = connection.execute(text("""
+            DELETE FROM dds.facts
+            WHERE datetime_id IN (
+                SELECT datetime_id
+                FROM dds.datetime
+                WHERE date_value BETWEEN :sdt AND :edt
+            )
+        """), {"sdt": p_sdt, "edt": p_edt})
+        print(f"[DDS] facts: удалено {delete_facts.rowcount} старых записей за период")
+
 
         # facts
         result = connection.execute(text("""
@@ -392,9 +403,17 @@ def load_to_dds():
                 d.date_value = o.dt
                 AND d.time_value = o.time::time
                 AND d.day_name = o.day
-        """))
+
+            WHERE o.dt BETWEEN :sdt AND :edt
+
+            ON CONFLICT(record_id) DO UPDATE SET
+                user_id = EXCLUDED.user_id,
+                track_id = EXCLUDED.track_id,
+                city_id = EXCLUDED.city_id,
+                datetime_id = EXCLUDED.datetime_id;
+        """), {"sdt": p_sdt, "edt": p_edt})
         print(
-            f"[DDS] facts: добавлено {result.rowcount} фактов]"
+            f"[DDS] facts: добавлено {result.rowcount} фактов"
         )
         # проверка кол-ва записей
         tables = [
@@ -403,7 +422,8 @@ def load_to_dds():
             "genres",
             "tracks",
             "cities",
-            "datetime"
+            "datetime",
+            "facts"
         ]
 
         print("\n[DDS] Загрузка завершена. Итоговое количество записей:")
@@ -413,36 +433,36 @@ def load_to_dds():
             ).scalar()
             print(f"{table}: {count}")
 
-        print("\n---ПРОВЕРКА---")
+        # print("\n---ПРОВЕРКА---")
 
         
-        # 1 RULE-01: пропущенный значение userid
-        user_id_is_null = connection.execute(text("""
-            SELECT COUNT(*)
-            FROM dds.users
-            WHERE user_id IS NULL
-        """)).scalar()
-        print("Пропущен пользователь: \t", user_id_is_null)
+        # # 1 RULE-01: пропущенный значение userid
+        # user_id_is_null = connection.execute(text("""
+        #     SELECT COUNT(*)
+        #     FROM dds.users
+        #     WHERE user_id IS NULL
+        # """)).scalar()
+        # print("Пропущен пользователь: \t", user_id_is_null)
 
-        # 2 RULE-02: пропущенное значение ["track", "artists", "genres"]
-        values_is_null = connection.execute(text("""
-            SELECT
-                (SELECT COUNT(*) FROM dds.tracks WHERE track_name IS NULL) AS null_tracks,
-                (SELECT COUNT(*) FROM dds.artists WHERE artist_name IS NULL) AS null_artists,
-                (SELECT COUNT(*) FROM dds.genres WHERE genres IS NULL) AS null_genres
-        """)).fetchone()
+        # # 2 RULE-02: пропущенное значение ["track", "artists", "genres"]
+        # values_is_null = connection.execute(text("""
+        #     SELECT
+        #         (SELECT COUNT(*) FROM dds.tracks WHERE track_name IS NULL) AS null_tracks,
+        #         (SELECT COUNT(*) FROM dds.artists WHERE artist_name IS NULL) AS null_artists,
+        #         (SELECT COUNT(*) FROM dds.genres WHERE genres IS NULL) AS null_genres
+        # """)).fetchone()
 
-        print(
-            f"\nПропуски - треки: {values_is_null.null_tracks}"
-            f"\nПропуски - артисты: {values_is_null.null_artists}"
-            f"\nПропуски - жанры: {values_is_null.null_genres}"
-        )
-        # 3 выведем города
-        city_is_null = connection.execute(text("""
-            SELECT city_name
-            FROM dds.cities
-        """)).scalars().all()
-        print(f"\nГорода: {', '.join(city_is_null)}")
+        # print(
+        #     f"\nПропуски - треки: {values_is_null.null_tracks}"
+        #     f"\nПропуски - артисты: {values_is_null.null_artists}"
+        #     f"\nПропуски - жанры: {values_is_null.null_genres}"
+        # )
+        # # 3 выведем города
+        # city_is_null = connection.execute(text("""
+        #     SELECT city_name
+        #     FROM dds.cities
+        # """)).scalars().all()
+        # print(f"\nГорода: {', '.join(city_is_null)}")
 
         # # 4 жанры по городам
         # genres_by_city = connection.execute(text("""
@@ -467,38 +487,41 @@ def load_to_dds():
         # print(genres_by_city)
 
         # 5 дубликаты пользователей, исполнителей, жанров, городов
-        users_dup = connection.execute(text("""
-            SELECT user_id
-            FROM dds.users
-            GROUP BY user_id
-            HAVING COUNT(*) > 1
-        """)).scalar()
+        # users_dup = connection.execute(text("""
+        #     SELECT user_id
+        #     FROM dds.users
+        #     GROUP BY user_id
+        #     HAVING COUNT(*) > 1
+        # """)).scalar()
 
-        artists_dup = connection.execute(text("""
-            SELECT artist_name
-            FROM dds.artists
-            GROUP BY artist_name
-            HAVING COUNT(*) > 1
-        """)).scalar()
+        # artists_dup = connection.execute(text("""
+        #     SELECT artist_name
+        #     FROM dds.artists
+        #     GROUP BY artist_name
+        #     HAVING COUNT(*) > 1
+        # """)).scalar()
 
-        genres_dup = connection.execute(text("""
-            SELECT genre_name
-            FROM dds.genres
-            GROUP BY genre_name
-            HAVING COUNT(*) > 1
-        """)).scalar()
+        # genres_dup = connection.execute(text("""
+        #     SELECT genre_name
+        #     FROM dds.genres
+        #     GROUP BY genre_name
+        #     HAVING COUNT(*) > 1
+        # """)).scalar()
 
-        cities_dup = connection.execute(text("""
-            SELECT city_name
-            FROM dds.cities
-            GROUP BY city_name
-            HAVING COUNT(*) > 1
-        """)).scalar()
+        # cities_dup = connection.execute(text("""
+        #     SELECT city_name
+        #     FROM dds.cities
+        #     GROUP BY city_name
+        #     HAVING COUNT(*) > 1
+        # """)).scalar()
 
-        print(f"\nДубликаты - пользователи: {users_dup}")
-        print(f"\nДубликаты - артисты: {artists_dup}")
-        print(f"\nДубликаты - жанры: {genres_dup}")
-        print(f"\nДубликаты - города: {cities_dup}")
+        # print(f"\nДубликаты - пользователи: {users_dup}")
+        # print(f"\nДубликаты - артисты: {artists_dup}")
+        # print(f"\nДубликаты - жанры: {genres_dup}")
+        # print(f"\nДубликаты - города: {cities_dup}")
+
+
+
 
 if __name__ == "__main__":
     df = load_data("music_project.csv")
